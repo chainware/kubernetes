@@ -36,16 +36,15 @@ spec:
     spec:
       containers:
         - name: node-driver-registrar
-          image: quay.io/k8scsi/csi-node-driver-registrar:v1.2.0
-          lifecycle:
-            preStop:
-              exec:
-                command: ["/bin/sh", "-c", "rm -rf /registration/csi-hostpath /registration/csi-hostpath-reg.sock"]
+          image: quay.io/k8scsi/csi-node-driver-registrar:v1.3.0
           args:
             - --v=5
             - --csi-address=/csi/csi.sock
             - --kubelet-registration-path=/var/lib/kubelet/plugins/csi-hostpath/csi.sock
           securityContext:
+            # This is necessary only for systems with SELinux, where
+            # non-privileged sidecar containers cannot access unix domain socket
+            # created by privileged CSI driver container.
             privileged: true
           env:
             - name: KUBE_NODE_NAME
@@ -62,12 +61,14 @@ spec:
             name: csi-data-dir
 
         - name: hostpath
-          image: quay.io/k8scsi/hostpathplugin:v1.3.0-rc1
+          image: quay.io/k8scsi/hostpathplugin:v1.4.0-rc2
           args:
             - "--drivername=hostpath.csi.k8s.io"
             - "--v=5"
             - "--endpoint=$(CSI_ENDPOINT)"
             - "--nodeid=$(KUBE_NODE_NAME)"
+            # The only difference to github.com/kubernetes-csi/csi-driver-host-path/deploy
+            # - we have a tests that checks node limits.
             - "--maxvolumespernode=10"
           env:
             - name: CSI_ENDPOINT
@@ -104,7 +105,6 @@ spec:
               name: csi-data-dir
             - mountPath: /dev
               name: dev-dir
-
         - name: liveness-probe
           volumeMounts:
           - mountPath: /csi
@@ -112,7 +112,6 @@ spec:
           image: quay.io/k8scsi/livenessprobe:v1.1.0
           args:
           - --csi-address=/csi/csi.sock
-          - --connection-timeout=3s
           - --health-port=9898
 
       volumes:

@@ -28,8 +28,6 @@ go_test(
         "//pkg/printers:go_default_library",
         "//pkg/printers/internalversion:go_default_library",
         "//staging/src/k8s.io/api/apps/v1:go_default_library",
-        "//staging/src/k8s.io/api/apps/v1beta1:go_default_library",
-        "//staging/src/k8s.io/api/apps/v1beta2:go_default_library",
         "//staging/src/k8s.io/api/auditregistration/v1alpha1:go_default_library",
         "//staging/src/k8s.io/api/batch/v2alpha1:go_default_library",
         "//staging/src/k8s.io/api/core/v1:go_default_library",
@@ -74,7 +72,7 @@ go_test(
         "//test/integration/framework:go_default_library",
         "//vendor/github.com/google/uuid:go_default_library",
         "//vendor/k8s.io/gengo/examples/set-gen/sets:go_default_library",
-        "//vendor/k8s.io/klog:go_default_library",
+        "//vendor/k8s.io/klog/v2:go_default_library",
     ],
 )
 
@@ -92,6 +90,7 @@ filegroup(
         "//test/integration/apiserver/admissionwebhook:all-srcs",
         "//test/integration/apiserver/apply:all-srcs",
         "//test/integration/apiserver/certreload:all-srcs",
+        "//test/integration/apiserver/flowcontrol:all-srcs",
         "//test/integration/apiserver/podlogs:all-srcs",
     ],
     tags = ["automanaged"],

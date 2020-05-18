@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"golang.org/x/net/http2"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
@@ -66,7 +66,7 @@ func (s *SecureServingInfo) tlsConfig(stopCh <-chan struct{}) (*tls.Config, erro
 
 	if s.ClientCA != nil || s.Cert != nil || len(s.SNICerts) > 0 {
 		dynamicCertificateController := dynamiccertificates.NewDynamicServingCertificateController(
-			*tlsConfig,
+			tlsConfig,
 			s.ClientCA,
 			s.Cert,
 			s.SNICerts,

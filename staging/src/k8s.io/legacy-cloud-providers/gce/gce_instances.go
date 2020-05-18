@@ -29,7 +29,7 @@ import (
 	"cloud.google.com/go/compute/metadata"
 	computebeta "google.golang.org/api/compute/v0.beta"
 	compute "google.golang.org/api/compute/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud"
 	"github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud/filter"
@@ -111,7 +111,7 @@ func (g *Cloud) NodeAddresses(_ context.Context, _ types.NodeName) ([]v1.NodeAdd
 // NodeAddressesByProviderID will not be called from the node that is requesting this ID.
 // i.e. metadata service and other local methods cannot be used here
 func (g *Cloud) NodeAddressesByProviderID(ctx context.Context, providerID string) ([]v1.NodeAddress, error) {
-	timeoutCtx, cancel := cloud.ContextWithCallTimeout()
+	timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
 	defer cancel()
 
 	_, zone, name, err := splitProviderID(providerID)
@@ -229,7 +229,7 @@ func (g *Cloud) InstanceType(ctx context.Context, nodeName types.NodeName) (stri
 // AddSSHKeyToAllInstances adds an SSH public key as a legal identity for all instances
 // expected format for the key is standard ssh-keygen format: <protocol> <blob>
 func (g *Cloud) AddSSHKeyToAllInstances(ctx context.Context, user string, keyData []byte) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Hour)
 	defer cancel()
 
 	return wait.Poll(2*time.Second, 30*time.Second, func() (bool, error) {
@@ -361,21 +361,20 @@ func (g *Cloud) CurrentNodeName(ctx context.Context, hostname string) (types.Nod
 	return types.NodeName(hostname), nil
 }
 
-// AliasRanges returns a list of CIDR ranges that are assigned to the
+// AliasRangesByProviderID returns a list of CIDR ranges that are assigned to the
 // `node` for allocation to pods. Returns a list of the form
 // "<ip>/<netmask>".
-func (g *Cloud) AliasRanges(nodeName types.NodeName) (cidrs []string, err error) {
+func (g *Cloud) AliasRangesByProviderID(providerID string) (cidrs []string, err error) {
 	ctx, cancel := cloud.ContextWithCallTimeout()
 	defer cancel()
 
-	var instance *gceInstance
-	instance, err = g.getInstanceByName(mapNodeNameToInstanceName(nodeName))
+	_, zone, name, err := splitProviderID(providerID)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	var res *computebeta.Instance
-	res, err = g.c.BetaInstances().Get(ctx, meta.ZonalKey(instance.Name, lastComponent(instance.Zone)))
+	res, err = g.c.BetaInstances().Get(ctx, meta.ZonalKey(canonicalizeInstanceName(name), zone))
 	if err != nil {
 		return
 	}
@@ -388,28 +387,29 @@ func (g *Cloud) AliasRanges(nodeName types.NodeName) (cidrs []string, err error)
 	return
 }
 
-// AddAliasToInstance adds an alias to the given instance from the named
+// AddAliasToInstanceByProviderID adds an alias to the given instance from the named
 // secondary range.
-func (g *Cloud) AddAliasToInstance(nodeName types.NodeName, alias *net.IPNet) error {
+func (g *Cloud) AddAliasToInstanceByProviderID(providerID string, alias *net.IPNet) error {
 	ctx, cancel := cloud.ContextWithCallTimeout()
 	defer cancel()
 
-	v1instance, err := g.getInstanceByName(mapNodeNameToInstanceName(nodeName))
+	_, zone, name, err := splitProviderID(providerID)
 	if err != nil {
 		return err
 	}
-	instance, err := g.c.BetaInstances().Get(ctx, meta.ZonalKey(v1instance.Name, lastComponent(v1instance.Zone)))
+
+	instance, err := g.c.BetaInstances().Get(ctx, meta.ZonalKey(canonicalizeInstanceName(name), zone))
 	if err != nil {
 		return err
 	}
 
 	switch len(instance.NetworkInterfaces) {
 	case 0:
-		return fmt.Errorf("instance %q has no network interfaces", nodeName)
+		return fmt.Errorf("instance %q has no network interfaces", providerID)
 	case 1:
 	default:
 		klog.Warningf("Instance %q has more than one network interface, using only the first (%v)",
-			nodeName, instance.NetworkInterfaces)
+			providerID, instance.NetworkInterfaces)
 	}
 
 	iface := &computebeta.NetworkInterface{}
@@ -420,7 +420,7 @@ func (g *Cloud) AddAliasToInstance(nodeName types.NodeName, alias *net.IPNet) er
 		SubnetworkRangeName: g.secondaryRangeName,
 	})
 
-	mc := newInstancesMetricContext("add_alias", v1instance.Zone)
+	mc := newInstancesMetricContext("add_alias", zone)
 	err = g.c.BetaInstances().UpdateNetworkInterface(ctx, meta.ZonalKey(instance.Name, lastComponent(instance.Zone)), iface.Name, iface)
 	return mc.Observe(err)
 }

@@ -19,9 +19,11 @@ package encryptionconfig
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"io"
 	"io/ioutil"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,19 +63,31 @@ func mustConfigReader(t *testing.T, path string) io.Reader {
 // testEnvelopeService is a mock envelope service which can be used to simulate remote Envelope services
 // for testing of the envelope transformer with other transformers.
 type testEnvelopeService struct {
+	err error
 }
 
 func (t *testEnvelopeService) Decrypt(data []byte) ([]byte, error) {
+	if t.err != nil {
+		return nil, t.err
+	}
 	return base64.StdEncoding.DecodeString(string(data))
 }
 
 func (t *testEnvelopeService) Encrypt(data []byte) ([]byte, error) {
+	if t.err != nil {
+		return nil, t.err
+	}
 	return []byte(base64.StdEncoding.EncodeToString(data)), nil
 }
 
 // The factory method to create mock envelope service.
 func newMockEnvelopeService(endpoint string, timeout time.Duration) (envelope.Service, error) {
-	return &testEnvelopeService{}, nil
+	return &testEnvelopeService{nil}, nil
+}
+
+// The factory method to create mock envelope service which always returns error.
+func newMockErrorEnvelopeService(endpoint string, timeout time.Duration) (envelope.Service, error) {
+	return &testEnvelopeService{errors.New("test")}, nil
 }
 
 func TestLegacyConfig(t *testing.T) {
@@ -134,31 +148,31 @@ func TestEncryptionProviderConfigCorrect(t *testing.T) {
 	// Transforms data using one of them, and tries to untransform using the others.
 	// Repeats this for all possible combinations.
 	correctConfigWithIdentityFirst := "testdata/valid-configs/identity-first.yaml"
-	identityFirstTransformerOverrides, err := ParseEncryptionConfiguration(mustConfigReader(t, correctConfigWithIdentityFirst))
+	identityFirstTransformerOverrides, err := parseEncryptionConfiguration(mustConfigReader(t, correctConfigWithIdentityFirst))
 	if err != nil {
 		t.Fatalf("error while parsing configuration file: %s.\nThe file was:\n%s", err, correctConfigWithIdentityFirst)
 	}
 
 	correctConfigWithAesGcmFirst := "testdata/valid-configs/aes-gcm-first.yaml"
-	aesGcmFirstTransformerOverrides, err := ParseEncryptionConfiguration(mustConfigReader(t, correctConfigWithAesGcmFirst))
+	aesGcmFirstTransformerOverrides, err := parseEncryptionConfiguration(mustConfigReader(t, correctConfigWithAesGcmFirst))
 	if err != nil {
 		t.Fatalf("error while parsing configuration file: %s.\nThe file was:\n%s", err, correctConfigWithAesGcmFirst)
 	}
 
 	correctConfigWithAesCbcFirst := "testdata/valid-configs/aes-cbc-first.yaml"
-	aesCbcFirstTransformerOverrides, err := ParseEncryptionConfiguration(mustConfigReader(t, correctConfigWithAesCbcFirst))
+	aesCbcFirstTransformerOverrides, err := parseEncryptionConfiguration(mustConfigReader(t, correctConfigWithAesCbcFirst))
 	if err != nil {
 		t.Fatalf("error while parsing configuration file: %s.\nThe file was:\n%s", err, correctConfigWithAesCbcFirst)
 	}
 
 	correctConfigWithSecretboxFirst := "testdata/valid-configs/secret-box-first.yaml"
-	secretboxFirstTransformerOverrides, err := ParseEncryptionConfiguration(mustConfigReader(t, correctConfigWithSecretboxFirst))
+	secretboxFirstTransformerOverrides, err := parseEncryptionConfiguration(mustConfigReader(t, correctConfigWithSecretboxFirst))
 	if err != nil {
 		t.Fatalf("error while parsing configuration file: %s.\nThe file was:\n%s", err, correctConfigWithSecretboxFirst)
 	}
 
 	correctConfigWithKMSFirst := "testdata/valid-configs/kms-first.yaml"
-	kmsFirstTransformerOverrides, err := ParseEncryptionConfiguration(mustConfigReader(t, correctConfigWithKMSFirst))
+	kmsFirstTransformerOverrides, err := parseEncryptionConfiguration(mustConfigReader(t, correctConfigWithKMSFirst))
 	if err != nil {
 		t.Fatalf("error while parsing configuration file: %s.\nThe file was:\n%s", err, correctConfigWithKMSFirst)
 	}
@@ -261,6 +275,49 @@ func TestKMSPluginHealthz(t *testing.T) {
 	}
 }
 
+func TestKMSPluginHealthzTTL(t *testing.T) {
+	service, _ := newMockEnvelopeService("unix:///tmp/testprovider.sock", 3*time.Second)
+	errService, _ := newMockErrorEnvelopeService("unix:///tmp/testprovider.sock", 3*time.Second)
+
+	testCases := []struct {
+		desc    string
+		probe   *kmsPluginProbe
+		wantTTL time.Duration
+	}{
+		{
+			desc: "kms provider in good state",
+			probe: &kmsPluginProbe{
+				name:         "test",
+				ttl:          kmsPluginHealthzNegativeTTL,
+				Service:      service,
+				l:            &sync.Mutex{},
+				lastResponse: &kmsPluginHealthzResponse{},
+			},
+			wantTTL: kmsPluginHealthzPositiveTTL,
+		},
+		{
+			desc: "kms provider in bad state",
+			probe: &kmsPluginProbe{
+				name:         "test",
+				ttl:          kmsPluginHealthzPositiveTTL,
+				Service:      errService,
+				l:            &sync.Mutex{},
+				lastResponse: &kmsPluginHealthzResponse{},
+			},
+			wantTTL: kmsPluginHealthzNegativeTTL,
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.desc, func(t *testing.T) {
+			tt.probe.Check()
+			if tt.probe.ttl != tt.wantTTL {
+				t.Fatalf("want ttl %v, got ttl %v", tt.wantTTL, tt.probe.ttl)
+			}
+		})
+	}
+}
+
 // As long as got and want contain envelope.Service we will return true.
 // If got has an envelope.Service and want does note (or vice versa) this will return false.
 func serviceComparer(_, _ envelope.Service) bool {
@@ -341,7 +398,7 @@ func testCBCKeyRotationWithProviders(t *testing.T, firstEncryptionConfig, firstP
 
 func getTransformerFromEncryptionConfig(t *testing.T, encryptionConfigPath string) value.Transformer {
 	t.Helper()
-	transformers, err := ParseEncryptionConfiguration(mustConfigReader(t, encryptionConfigPath))
+	transformers, err := parseEncryptionConfiguration(mustConfigReader(t, encryptionConfigPath))
 	if err != nil {
 		t.Fatal(err)
 	}

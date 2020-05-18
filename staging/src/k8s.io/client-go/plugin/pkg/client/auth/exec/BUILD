@@ -24,7 +24,7 @@ go_library(
         "//staging/src/k8s.io/client-go/util/connrotation:go_default_library",
         "//vendor/github.com/davecgh/go-spew/spew:go_default_library",
         "//vendor/golang.org/x/crypto/ssh/terminal:go_default_library",
-        "//vendor/k8s.io/klog:go_default_library",
+        "//vendor/k8s.io/klog/v2:go_default_library",
     ],
 )
 
@@ -41,7 +41,6 @@ go_test(
         "//staging/src/k8s.io/apimachinery/pkg/runtime:go_default_library",
         "//staging/src/k8s.io/client-go/pkg/apis/clientauthentication:go_default_library",
         "//staging/src/k8s.io/client-go/tools/clientcmd/api:go_default_library",
-        "//staging/src/k8s.io/client-go/tools/metrics:go_default_library",
         "//staging/src/k8s.io/client-go/transport:go_default_library",
     ],
 )

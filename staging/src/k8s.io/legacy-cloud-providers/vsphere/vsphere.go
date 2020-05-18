@@ -48,7 +48,7 @@ import (
 	cloudprovider "k8s.io/cloud-provider"
 	nodehelpers "k8s.io/cloud-provider/node/helpers"
 	volumehelpers "k8s.io/cloud-provider/volume/helpers"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"k8s.io/legacy-cloud-providers/vsphere/vclib"
 	"k8s.io/legacy-cloud-providers/vsphere/vclib/diskmanagers"
@@ -572,7 +572,7 @@ func getLocalIP() ([]v1.NodeAddress, error) {
 		} else {
 			for _, addr := range localAddrs {
 				if ipnet, ok := addr.(*net.IPNet); ok {
-					if ipnet.IP.To4() != nil {
+					if !ipnet.IP.IsLinkLocalUnicast() {
 						// Filter external IP by MAC address OUIs from vCenter and from ESX
 						vmMACAddr := strings.ToLower(i.HardwareAddr.String())
 						// Making sure that the MAC address is long enough
@@ -683,7 +683,7 @@ func (vs *VSphere) NodeAddresses(ctx context.Context, nodeName k8stypes.NodeName
 	for _, v := range vmMoList[0].Guest.Net {
 		if vs.cfg.Network.PublicNetwork == v.Network {
 			for _, ip := range v.IpAddress {
-				if net.ParseIP(ip).To4() != nil {
+				if !net.ParseIP(ip).IsLinkLocalUnicast() {
 					nodehelpers.AddToNodeAddresses(&addrs,
 						v1.NodeAddress{
 							Type:    v1.NodeExternalIP,
@@ -1071,11 +1071,11 @@ func (vs *VSphere) DisksAreAttached(nodeVolumes map[k8stypes.NodeName][]string) 
 				dcNodes[VC_DC] = append(dcNodes[VC_DC], nodeName)
 			}
 
-			for _, nodes := range dcNodes {
+			for _, nodeNames := range dcNodes {
 				localAttachedMap := make(map[string]map[string]bool)
 				localAttachedMaps = append(localAttachedMaps, localAttachedMap)
 				// Start go routines per VC-DC to check disks are attached
-				go func() {
+				go func(nodes []k8stypes.NodeName) {
 					nodesToRetryLocal, err := vs.checkDiskAttached(ctx, nodes, nodeVolumes, localAttachedMap, retry)
 					if err != nil {
 						if !vclib.IsManagedObjectNotFoundError(err) {
@@ -1089,7 +1089,7 @@ func (vs *VSphere) DisksAreAttached(nodeVolumes map[k8stypes.NodeName][]string) 
 					nodesToRetry = append(nodesToRetry, nodesToRetryLocal...)
 					nodesToRetryMutex.Unlock()
 					wg.Done()
-				}()
+				}(nodeNames)
 				wg.Add(1)
 			}
 			wg.Wait()
